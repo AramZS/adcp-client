@@ -346,26 +346,44 @@ export class SalesAgentsHandlers {
   /**
    * Get agent capabilities (tools, formats, etc.)
    */
-  async getAgentCapabilities(agentId: string): Promise<any> {
+  async getAgentCapabilities(agentId: string, customAgentConfig?: Partial<AgentConfig>): Promise<any> {
     try {
-      if (!this.client) {
+      // Handle custom agents similar to querySalesAgent
+      let client = this.client;
+      let targetAgentId = agentId;
+
+      if (customAgentConfig && customAgentConfig.id === agentId) {
+        // Create temporary client for custom agent
+        const customAgent: AgentConfig = {
+          id: customAgentConfig.id,
+          name: customAgentConfig.name || customAgentConfig.id,
+          agent_uri: customAgentConfig.agent_uri || (customAgentConfig as any).server_url,
+          protocol: customAgentConfig.protocol || 'mcp',
+          auth_token_env: customAgentConfig.auth_token_env,
+          requiresAuth: customAgentConfig.requiresAuth !== false
+        };
+        client = new ADCPMultiAgentClient([customAgent]);
+        console.log(`🔧 Created temporary client for custom agent capabilities: ${customAgent.name}`);
+      }
+
+      if (!client) {
         throw new Error('No ADCP client initialized');
       }
 
-      const agent = this.client.agent(agentId);
+      const agent = client.agent(targetAgentId);
       if (!agent) {
-        throw new Error(`Agent ${agentId} not found`);
+        throw new Error(`Agent ${targetAgentId} not found`);
       }
 
-      const agentConfig = this.client.getAgentConfigs().find(a => a.id === agentId);
+      const agentConfig = client.getAgentConfigs().find(a => a.id === targetAgentId);
       if (!agentConfig) {
-        throw new Error(`Agent config for ${agentId} not found`);
+        throw new Error(`Agent config for ${targetAgentId} not found`);
       }
 
       // For now, return basic capabilities
       // TODO: Enhance library to expose tool discovery
       return {
-        agent_id: agentId,
+        agent_id: targetAgentId,
         agent_name: agentConfig.name,
         protocol: agentConfig.protocol,
         supported_tasks: [
@@ -386,6 +404,59 @@ export class SalesAgentsHandlers {
         adcp_version: ADCP_VERSION
       };
     }
+  }
+
+  /**
+   * Query A2A agent (legacy method for backward compatibility)
+   */
+  async queryA2AAgent(
+    agent: { id: string; name: string; agent_uri: string; protocol: 'a2a' | 'mcp' },
+    brief: string,
+    promoted_offering?: string,
+    tool_name: string = 'get_products'
+  ): Promise<AgentQueryResult> {
+    return this.querySalesAgent(agent.id, brief, promoted_offering, agent as Partial<AgentConfig>, tool_name);
+  }
+
+  /**
+   * Query MCP agent (legacy method for backward compatibility)
+   */
+  async queryMCPAgent(
+    agent: { id: string; name: string; agent_uri: string; protocol: 'a2a' | 'mcp' },
+    brief: string,
+    promoted_offering?: string,
+    tool_name: string = 'get_products'
+  ): Promise<AgentQueryResult> {
+    return this.querySalesAgent(agent.id, brief, promoted_offering, agent as Partial<AgentConfig>, tool_name);
+  }
+
+  /**
+   * Discover agent capabilities (wrapper for getAgentCapabilities)
+   */
+  async discoverAgentCapabilities(agentId: string): Promise<any> {
+    return this.getAgentCapabilities(agentId);
+  }
+
+  /**
+   * Fetch standard creative formats
+   */
+  async fetchStandardFormats(): Promise<any[]> {
+    try {
+      // Import the standard formats utility from the library
+      const { getStandardFormats } = await import('../lib/utils');
+      return getStandardFormats();
+    } catch (error) {
+      console.error('Failed to fetch standard formats:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get all configured sales agents (API format)
+   */
+  async getSalesAgents(): Promise<{ agents: AgentConfig[] }> {
+    const agents = this.getConfiguredAgents();
+    return { agents };
   }
 
   /**
